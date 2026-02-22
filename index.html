@@ -1,84 +1,911 @@
-export default {
-  async fetch(request, env, ctx) {
-    const url = new URL(request.url);
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>FakeNews Filter (MVP) – Claim → Belege → Transparenz</title>
+  <meta name="description" content="MVP FakeNews Filter: extrahiert überprüfbare Claims, sammelt Belege, bewertet Quellenqualität und erstellt einen transparenten Report – ohne vorgefertigte Antworten." />
+  <meta name="robots" content="index, follow" />
+  <meta name="author" content="FakeNews Filter MVP" />
+  <link rel="canonical" href="./" />
 
-    // CORS
-    const corsHeaders = {
-      "access-control-allow-origin": "*",
-      "access-control-allow-methods": "GET, OPTIONS",
-      "access-control-allow-headers": "content-type, accept",
-    };
-    if (request.method === "OPTIONS") {
-      return new Response(null, { headers: corsHeaders });
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="FakeNews Filter (MVP) – Claim → Belege → Transparenz" />
+  <meta property="og:description" content="Ohne vorgefertigte Antworten: Claims extrahieren, Quellen prüfen, nachvollziehbaren Report erstellen." />
+  <meta property="og:image" content="./og.png" />
+  <meta property="og:locale" content="de_CH" />
+  <meta name="twitter:card" content="summary_large_image" />
+
+  <style>
+    :root{
+      --bg:#0b1020;
+      --panel:#111a33;
+      --panel2:#0f1730;
+      --text:#eaf0ff;
+      --muted:#b9c2dd;
+      --faint:#7e89ad;
+      --line:rgba(255,255,255,.08);
+      --good:#38d39f;
+      --warn:#ffd166;
+      --bad:#ff5c7a;
+      --info:#63b3ff;
+      --btn:#1b2a57;
+      --btn2:#1a2b5e;
+      --shadow: 0 18px 60px rgba(0,0,0,.35);
+      --radius:18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans", "Helvetica Neue", sans-serif;
     }
-
-    if (url.pathname === "/extract") {
-      const target = url.searchParams.get("url");
-      if (!target) {
-        return json({ error: "missing url" }, 400, corsHeaders);
-      }
-
-      let fetched;
-      try {
-        fetched = await fetch(target, {
-          headers: {
-            "user-agent": "FakeFilterMVP/1.0 (+https://example.invalid)",
-            "accept": "text/html,text/plain;q=0.9,*/*;q=0.8",
-          },
-        });
-      } catch (e) {
-        return json({ error: "fetch failed" }, 502, corsHeaders);
-      }
-
-      const ct = (fetched.headers.get("content-type") || "").toLowerCase();
-      let text = "";
-      try {
-        if (ct.includes("text/") || ct.includes("html")) {
-          const raw = await fetched.text();
-          text = htmlToText(raw).slice(0, 20000);
-        } else {
-          text = `Unsupported content-type: ${ct}`;
-        }
-      } catch (e) {
-        return json({ error: "read failed" }, 500, corsHeaders);
-      }
-
-      return json({
-        ok: true,
-        url: target,
-        content_type: ct,
-        text,
-      }, 200, corsHeaders);
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family:var(--sans);
+      background:
+        radial-gradient(1100px 600px at 20% -10%, rgba(99,179,255,.20), transparent 60%),
+        radial-gradient(900px 500px at 100% 0%, rgba(56,211,159,.15), transparent 55%),
+        radial-gradient(1000px 650px at 60% 120%, rgba(255,92,122,.12), transparent 60%),
+        var(--bg);
+      color:var(--text);
     }
+    a{color:inherit}
+    .wrap{max-width:1180px;margin:0 auto;padding:22px 18px 70px}
+    header{
+      display:flex;align-items:flex-start;justify-content:space-between;gap:16px;
+      padding:18px 0 8px;
+    }
+    .brand{
+      display:flex;flex-direction:column;gap:6px;
+    }
+    h1{margin:0;font-size:22px;letter-spacing:.2px}
+    .sub{color:var(--muted);font-size:13px;line-height:1.35;max-width:720px}
+    .pillrow{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+    .pill{
+      font-size:12px;color:var(--muted);
+      border:1px solid var(--line);
+      background:rgba(255,255,255,.03);
+      padding:6px 10px;border-radius:999px
+    }
+    .grid{
+      display:grid;gap:14px;
+      grid-template-columns: 1.15fr .85fr;
+      margin-top:14px;
+    }
+    @media (max-width: 980px){
+      .grid{grid-template-columns:1fr}
+    }
+    .card{
+      background:linear-gradient(180deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+      overflow:hidden;
+    }
+    .card .hd{
+      padding:14px 14px 12px;
+      border-bottom:1px solid var(--line);
+      display:flex;align-items:center;justify-content:space-between;gap:10px;
+      background:rgba(0,0,0,.12);
+    }
+    .card .hd .ttl{font-weight:800;font-size:13px;letter-spacing:.25px;color:var(--text)}
+    .card .bd{padding:14px}
+    textarea{
+      width:100%;
+      min-height:180px;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      color:var(--text);
+      padding:12px 12px;
+      outline:none;
+      resize:vertical;
+      line-height:1.4;
+      font-size:14px;
+    }
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .btn{
+      border:1px solid var(--line);
+      background:linear-gradient(180deg, rgba(27,42,87,.95), rgba(17,26,51,.9));
+      color:var(--text);
+      border-radius:14px;
+      padding:10px 12px;
+      font-weight:800;
+      cursor:pointer;
+      user-select:none;
+    }
+    .btn:hover{filter:brightness(1.06)}
+    .btn:active{transform:translateY(1px)}
+    .btn.secondary{
+      background:rgba(255,255,255,.03);
+      color:var(--muted);
+      font-weight:800;
+    }
+    .btn.danger{
+      background:rgba(255,92,122,.12);
+      color:#ffd4dc;
+    }
+    .field{
+      display:flex;flex-direction:column;gap:6px;flex:1 1 230px;
+    }
+    label{font-size:12px;color:var(--muted);font-weight:800}
+    input[type="text"]{
+      width:100%;
+      border-radius:14px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.18);
+      color:var(--text);
+      padding:10px 12px;
+      outline:none;
+      font-size:13px;
+    }
+    .hint{font-size:12px;color:var(--faint);line-height:1.35}
+    .list{
+      display:flex;flex-direction:column;gap:10px;
+    }
+    .item{
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.16);
+      border-radius:16px;
+      padding:12px;
+    }
+    .item .top{
+      display:flex;justify-content:space-between;gap:10px;align-items:flex-start;
+    }
+    .claimtxt{font-weight:900;font-size:13px;line-height:1.35}
+    .badge{
+      font-size:11px;font-weight:900;
+      border:1px solid var(--line);
+      padding:4px 8px;border-radius:999px;color:var(--muted);
+      background:rgba(255,255,255,.03);
+      white-space:nowrap;
+    }
+    .badge.good{color:#bff8e6;background:rgba(56,211,159,.12)}
+    .badge.warn{color:#fff2c9;background:rgba(255,209,102,.12)}
+    .badge.bad{color:#ffd0d8;background:rgba(255,92,122,.12)}
+    .meta{
+      margin-top:8px;
+      display:grid;grid-template-columns:1fr 1fr;gap:10px;
+    }
+    .meta .box{
+      border:1px dashed rgba(255,255,255,.10);
+      border-radius:14px;padding:10px;
+      background:rgba(255,255,255,.02);
+    }
+    .k{font-size:11px;color:var(--faint);font-weight:900;margin-bottom:6px}
+    .v{font-size:12px;color:var(--muted);line-height:1.35}
+    .eviRow{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+    .evi{
+      flex:1 1 260px;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:10px;
+      background:rgba(0,0,0,.14);
+    }
+    .evi input{margin-top:6px}
+    .small{font-size:12px;color:var(--muted);line-height:1.35}
+    .hr{height:1px;background:var(--line);margin:12px 0}
+    .scoreBox{
+      display:flex;gap:10px;align-items:center;flex-wrap:wrap;
+    }
+    .score{
+      width:120px;height:120px;border-radius:22px;
+      border:1px solid var(--line);
+      background:rgba(0,0,0,.16);
+      display:flex;flex-direction:column;align-items:center;justify-content:center;
+    }
+    .score .n{font-size:34px;font-weight:1000;letter-spacing:-.5px}
+    .score .t{font-size:12px;color:var(--muted);font-weight:900;margin-top:2px}
+    .explain{flex:1 1 320px}
+    ul{margin:8px 0 0 18px;color:var(--muted);font-size:13px;line-height:1.45}
+    .mono{
+      font-family:var(--mono);
+      font-size:12px;
+      color:#dce6ff;
+      background:rgba(0,0,0,.22);
+      border:1px solid var(--line);
+      padding:10px;border-radius:14px;
+      overflow:auto;
+      white-space:pre-wrap;
+      word-break:break-word;
+    }
+    footer{margin-top:18px;color:var(--faint);font-size:12px;line-height:1.45}
+    .toast{
+      position:fixed;left:50%;transform:translateX(-50%);
+      bottom:16px;
+      background:rgba(0,0,0,.65);
+      border:1px solid var(--line);
+      color:var(--text);
+      padding:10px 12px;border-radius:14px;
+      font-weight:900;font-size:12px;
+      opacity:0;pointer-events:none;
+      transition:.2s ease;
+    }
+    .toast.on{opacity:1}
+  </style>
+</head>
 
-    return new Response("FakeFilter MVP Worker OK. Use /extract?url=https://…", {
-      headers: { ...corsHeaders, "content-type": "text/plain; charset=utf-8" },
-    });
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand">
+        <h1>FakeNews Filter (MVP)</h1>
+        <div class="sub">
+          Keine vorgefertigten Antworten. Dieses Tool erzeugt einen <b>transparenzbasierten</b> Report:
+          <b>Claims</b> werden extrahiert, <b>Belege</b> werden gesammelt (manuell oder per URL-Einlesen),
+          und daraus entsteht ein nachvollziehbarer Score (0–100) + Begründung.
+        </div>
+        <div class="pillrow">
+          <div class="pill">Claim-Extraktion (heuristisch)</div>
+          <div class="pill">Quellenqualität statt Ideologie</div>
+          <div class="pill">Unklar/Unprüfbar ist erlaubt</div>
+          <div class="pill">Export: JSON / Copy-Report</div>
+        </div>
+      </div>
+      <div class="pill" id="buildInfo">Build: MVP v1 • Offline-fähig</div>
+    </header>
+
+    <div class="grid">
+      <!-- LEFT: Input -->
+      <section class="card">
+        <div class="hd">
+          <div class="ttl">1) Eingabe</div>
+          <div class="row">
+            <button class="btn secondary" id="btnDemo">Demo-Text</button>
+            <button class="btn danger" id="btnClear">Leeren</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="hint">
+            Füge Text, Thread, Artikel-Auszug oder Transcript ein. Das Tool extrahiert daraus einzelne überprüfbare Aussagen (Claims).
+            Danach kannst du pro Claim Quellen/Belege hinzufügen.
+          </div>
+          <div style="height:10px"></div>
+          <textarea id="inputText" placeholder="Text hier einfügen …"></textarea>
+
+          <div style="height:12px"></div>
+
+          <div class="row">
+            <button class="btn" id="btnExtract">Claims extrahieren</button>
+            <div class="field" style="max-width:280px">
+              <label for="proxyUrl">Optional: Proxy-Backend URL (CORS-frei)</label>
+              <input id="proxyUrl" type="text" placeholder="z.B. https://dein-worker.example.com" />
+              <div class="hint">Wenn du den Cloudflare Worker unten nutzt: hier die Worker-URL eintragen.</div>
+            </div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="row">
+            <div class="field">
+              <label for="topic">Thema/Label (nur für Report-Titel)</label>
+              <input id="topic" type="text" placeholder="z.B. 'Gesundheit', 'Politik', 'Wirtschaft' …" />
+            </div>
+            <div class="field">
+              <label for="lang">Sprache</label>
+              <input id="lang" type="text" value="de" />
+              <div class="hint">Nur fürs UI/Report; die Analyse ist sprachunabhängig heuristisch.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- RIGHT: Output summary -->
+      <aside class="card">
+        <div class="hd">
+          <div class="ttl">2) Report</div>
+          <div class="row">
+            <button class="btn secondary" id="btnCopy">Report kopieren</button>
+            <button class="btn secondary" id="btnJson">JSON exportieren</button>
+          </div>
+        </div>
+        <div class="bd">
+          <div class="scoreBox">
+            <div class="score">
+              <div class="n" id="overallScore">—</div>
+              <div class="t">Score 0–100</div>
+            </div>
+            <div class="explain">
+              <div class="small" id="overallLabel"><b>Status:</b> —</div>
+              <ul id="overallReasons">
+                <li>Extrahiere Claims, füge Belege hinzu, dann „Score berechnen“.</li>
+              </ul>
+              <div style="height:10px"></div>
+              <button class="btn" id="btnScore">Score berechnen</button>
+            </div>
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="small"><b>Export Vorschau:</b></div>
+          <div class="mono" id="reportPreview">{ }</div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- Claims -->
+    <section class="card" style="margin-top:14px">
+      <div class="hd">
+        <div class="ttl">3) Claims & Belege</div>
+        <div class="row">
+          <button class="btn secondary" id="btnExpandAll">Alle öffnen</button>
+          <button class="btn secondary" id="btnCollapseAll">Alle schließen</button>
+        </div>
+      </div>
+      <div class="bd">
+        <div class="hint">
+          Für jeden Claim: Beleg(e) hinzufügen. Du kannst URLs einfügen und (optional) via Proxy textlich einlesen lassen.
+          Danach bewertet der Score die <b>Beleglage & Quellenqualität</b> – nicht die Ideologie.
+        </div>
+        <div style="height:12px"></div>
+        <div class="list" id="claimsList"></div>
+      </div>
+    </section>
+
+    <footer>
+      <b>Hinweis:</b> Dieses MVP macht keine “Wahrheitsurteile” ohne Belege. Es bewertet Transparenz-Signale, Beleglage,
+      Quellenqualität, Kontext und Manipulationsmuster. Bei Gesundheits-/Sicherheitsfragen sollst du Primärquellen (Behörden, Leitlinien, RCT/Reviews) bevorzugen.
+    </footer>
+  </div>
+
+  <div class="toast" id="toast">Kopiert</div>
+
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+
+  const state = {
+    claims: [],
+    createdAt: new Date().toISOString(),
+    topic: "",
+    lang: "de"
+  };
+
+  // ---- Heuristics (no prefabricated topic answers) ----
+  const MANIP_WORDS = [
+    "schock", "skandal", "geheim", "zensur", "lügenpresse", "beweis", "wahrheit",
+    "niemand spricht darüber", "sie wollen nicht", "viral", "sofort", "katastrophe",
+    "crash", "untergang", "betrug", "system", "elite", "wach auf", "endlich"
+  ];
+
+  function normalize(s){ return (s||"").trim(); }
+
+  function splitSentences(text){
+    // simple sentence splitter; keeps it deterministic and offline
+    const cleaned = text
+      .replace(/\s+/g, " ")
+      .replace(/([.!?])\s+/g, "$1\n");
+    return cleaned.split("\n").map(s => s.trim()).filter(Boolean);
   }
-};
 
-function json(obj, status = 200, headers = {}) {
-  return new Response(JSON.stringify(obj, null, 2), {
-    status,
-    headers: { ...headers, "content-type": "application/json; charset=utf-8" },
+  function isLikelyClaim(sentence){
+    const s = sentence.trim();
+    if (s.length < 18) return false;
+    // avoid pure questions / pure opinions
+    const hasQuestion = /[?]$/.test(s);
+    const hasVerb = /\b(ist|sind|war|waren|wird|werden|hat|haben|zeigt|belegt|verursacht|führt|steigt|fällt|nimmt|nimmt zu|nimmt ab|kostet|beträgt|gilt|galt|passierte|passiert)\b/i.test(s);
+    const hasNumberOrNamed = /\d|%|CHF|€|\b(Bund|Bundes|WHO|FDA|EU|UNO|UN|SNB|EZB|BIP|Inflation|Studie|Bericht|Gesetz|Verordnung)\b/i.test(s);
+    const tooOpinionated = /\b(ich finde|ich glaube|meiner meinung|fühle|wir sollten|muss man)\b/i.test(s);
+    if (tooOpinionated && !hasNumberOrNamed) return false;
+    if (hasQuestion && !hasNumberOrNamed) return false;
+    return hasVerb || hasNumberOrNamed;
+  }
+
+  function classifyClaim(sentence){
+    const s = sentence.trim();
+    const isQuestion = /[?]$/.test(s);
+    const hasShould = /\b(sollte|müsste|muss man|wir sollten)\b/i.test(s);
+    const hasValueWords = /\b(gerecht|ungerecht|schlimm|gut|böse|korrupt|verrückt|lächerlich)\b/i.test(s);
+
+    if (isQuestion) return "frage";
+    if (hasShould || hasValueWords) return "wertung";
+    const hasFuture = /\b(wird|werden)\b/i.test(s) && /\b(kommen|passieren|steigt|fällt|crash)\b/i.test(s);
+    if (hasFuture) return "prognose";
+    return "fakt";
+  }
+
+  function manipulationSignals(text){
+    const t = text.toLowerCase();
+    let hits = 0;
+    MANIP_WORDS.forEach(w => { if (t.includes(w)) hits++; });
+    const caps = (text.match(/[A-ZÄÖÜ]{4,}/g) || []).length;
+    const excls = (text.match(/!/g) || []).length;
+    const absolutes = (text.match(/\b(immer|nie|alle|niemand|100%|garantiert)\b/gi) || []).length;
+    return { hits, caps, excls, absolutes };
+  }
+
+  function domainFromUrl(u){
+    try { return new URL(u).hostname.replace(/^www\./,"").toLowerCase(); } catch { return ""; }
+  }
+
+  // Quality registry (NOT topic outcomes, only source-type hints)
+  const SOURCE_HINTS = [
+    { match: /(\.gov|\.admin\.ch|\.bund\.de|\.europa\.eu)$/i, base: 85, label: "offiziell/behörde" },
+    { match: /(who\.int|cdc\.gov|ema\.europa\.eu|fda\.gov|swissmedic\.ch|bag\.admin\.ch)/i, base: 88, label: "gesundheitsbehörde" },
+    { match: /(oecd\.org|imf\.org|worldbank\.org|bis\.org|ecb\.europa\.eu|snb\.ch)/i, base: 82, label: "institution" },
+    { match: /(nature\.com|science\.org|nejm\.org|thelancet\.com|bmj\.com|jamanetwork\.com|cochranelibrary\.com|pubmed\.ncbi\.nlm\.nih\.gov)/i, base: 86, label: "peer-reviewed/medizin" },
+    { match: /(reuters\.com|apnews\.com|bbc\.(com|co\.uk)|tagesschau\.de|nzz\.ch|theguardian\.com|nytimes\.com|ft\.com)/i, base: 74, label: "nachrichten (stark)" },
+    { match: /(wikipedia\.org)/i, base: 62, label: "sekundär (wiki)" },
+    { match: /(medium\.com|substack\.com|blogspot\.|wordpress\.|tiktok\.com|facebook\.com|x\.com|twitter\.com|instagram\.com|youtube\.com)/i, base: 40, label: "user-generated" },
+  ];
+
+  function estimateSourceQuality(url){
+    const d = domainFromUrl(url);
+    if (!d) return { score: 0, label: "keine URL" };
+    for (const h of SOURCE_HINTS){
+      if (h.match.test(d)) return { score: h.base, label: h.label };
+    }
+    // unknown domain: neutral baseline
+    return { score: 55, label: "unbekannt" };
+  }
+
+  function scoreClaim(claim){
+    // claim.evidence = [{url, stance, quote, notes, fetchedText?}]
+    const m = manipulationSignals(claim.text);
+    const type = claim.type;
+
+    // Evidence scoring
+    const ev = claim.evidence || [];
+    const urls = ev.map(e => e.url).filter(Boolean);
+    const uniqueDomains = new Set(urls.map(domainFromUrl).filter(Boolean));
+
+    let bestQ = 0;
+    let avgQ = 0;
+    if (ev.length){
+      const qs = ev.map(e => estimateSourceQuality(e.url).score).filter(n => n>0);
+      if (qs.length){
+        bestQ = Math.max(...qs);
+        avgQ = Math.round(qs.reduce((a,b)=>a+b,0)/qs.length);
+      }
+    }
+
+    const supportN = ev.filter(e => e.stance === "support").length;
+    const contradictN = ev.filter(e => e.stance === "contradict").length;
+    const neutralN = ev.filter(e => e.stance === "neutral").length;
+
+    // Corroboration bonus: independent domains
+    const corroboration = Math.min(25, uniqueDomains.size * 8); // 1 domain=8, 2=16, 3=24...
+
+    // Claim specificity
+    const hasNumbers = /\d|%|CHF|€/.test(claim.text);
+    const hasNamed = /\b(Studie|Bericht|Gesetz|Verordnung|Protokoll|Statistik|Daten)\b/i.test(claim.text);
+    const specificity = Math.min(15, (hasNumbers?8:0) + (hasNamed?7:0) + (claim.text.length>90?2:0));
+
+    // Context integrity: if quote/notes present and at least one URL
+    const context = Math.min(15, (ev.some(e => (e.quote||"").trim().length>=30)?8:0) + (urls.length?7:0));
+
+    // Manipulation penalty (structure-based)
+    const manipPenalty = Math.min(15, m.hits*2 + m.caps*2 + Math.max(0,m.excls-1) + m.absolutes*2);
+
+    // Type handling
+    let typeAdj = 0;
+    if (type === "wertung" || type === "frage") typeAdj = -10;      // not directly verifiable
+    if (type === "prognose") typeAdj = -6;
+
+    // Evidence stance balance
+    let stanceAdj = 0;
+    if (!ev.length) stanceAdj = -20;
+    else if (supportN && !contradictN) stanceAdj = +8;
+    else if (contradictN && !supportN) stanceAdj = -6;
+    else if (supportN && contradictN) stanceAdj = -4; // disputed
+
+    // Assemble
+    let score =
+      0
+      + Math.min(30, Math.round((avgQ*0.22) + (bestQ*0.18)))   // source quality component
+      + corroboration
+      + specificity
+      + context
+      + stanceAdj
+      + typeAdj
+      - manipPenalty;
+
+    score = Math.max(0, Math.min(100, Math.round(score)));
+
+    // Label
+    let label = "unbelegt";
+    if (type === "wertung" || type === "frage") label = "nicht verifizierbar (so formuliert)";
+    else if (!ev.length) label = "unbelegt (keine Quellen)";
+    else if (score >= 80) label = "gut belegt (methodisch stark)";
+    else if (score >= 60) label = "eher solide (weiter prüfen)";
+    else if (score >= 40) label = "kritisch (Kontext/Qualität fehlt)";
+    else label = "sehr kritisch (schwach / manipulativ / widersprüchlich)";
+
+    const reasons = [];
+    reasons.push(`Quellenqualität: best ${bestQ||0}/100, Ø ${avgQ||0}/100`);
+    reasons.push(`Unabhängige Domains: ${uniqueDomains.size} (Corroboration +${corroboration})`);
+    reasons.push(`Stances: support ${supportN}, contradict ${contradictN}, neutral ${neutralN}`);
+    if (manipPenalty) reasons.push(`Manipulationssignale: −${manipPenalty} (Trigger/CAPS/!/%/Absolut)`);
+    if (typeAdj) reasons.push(`Claim-Typ "${type}": ${typeAdj} (nicht direkt prüfbar = weniger Score)`);
+    if (context < 10) reasons.push(`Kontext: Zitat/Bezug fehlt oder zu dünn (mehr Auszug/Datum helfen)`);
+    if (!ev.length) reasons.push(`Füge mindestens 1–2 Primärquellen hinzu (Behörden, Originaldokument, Studie, Daten).`);
+
+    return { score, label, reasons };
+  }
+
+  // ---- UI ----
+  function toast(msg="OK"){
+    const el = $("toast");
+    el.textContent = msg;
+    el.classList.add("on");
+    setTimeout(()=>el.classList.remove("on"), 1200);
+  }
+
+  function makeClaimObject(text){
+    const t = text.trim();
+    return {
+      id: crypto.randomUUID(),
+      text: t,
+      type: classifyClaim(t),
+      createdAt: new Date().toISOString(),
+      evidence: [
+        { url:"", stance:"support", quote:"", notes:"" },
+        { url:"", stance:"contradict", quote:"", notes:"" }
+      ],
+      open: false
+    };
+  }
+
+  function renderClaims(){
+    const root = $("claimsList");
+    root.innerHTML = "";
+
+    if (!state.claims.length){
+      root.innerHTML = `<div class="hint">Noch keine Claims. Klicke oben auf „Claims extrahieren“.</div>`;
+      return;
+    }
+
+    for (const c of state.claims){
+      const {score, label} = scoreClaim(c);
+      const badgeClass = score>=80 ? "good" : score>=60 ? "warn" : score>=40 ? "warn" : "bad";
+
+      const item = document.createElement("div");
+      item.className = "item";
+      item.innerHTML = `
+        <div class="top">
+          <div class="claimtxt">${escapeHtml(c.text)}</div>
+          <div class="badge ${badgeClass}">${escapeHtml(c.type)} • ${score}/100</div>
+        </div>
+
+        <div class="meta">
+          <div class="box">
+            <div class="k">Status</div>
+            <div class="v">${escapeHtml(label)}</div>
+          </div>
+          <div class="box">
+            <div class="k">Aktion</div>
+            <div class="v">
+              <button class="btn secondary" data-act="toggle" data-id="${c.id}">${c.open ? "Schließen" : "Öffnen"}</button>
+              <button class="btn secondary" data-act="search" data-id="${c.id}">Web-Suche-Links</button>
+              <button class="btn danger" data-act="remove" data-id="${c.id}">Entfernen</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="details" style="margin-top:10px; display:${c.open ? "block" : "none"}">
+          <div class="small"><b>Belege hinzufügen</b> (Support / Contra). Keine vorgefertigten Urteile – nur belegte Transparenz.</div>
+
+          <div class="eviRow">
+            ${renderEvidenceEditor(c, 0, "Support-Beleg")}
+            ${renderEvidenceEditor(c, 1, "Contra-Beleg")}
+          </div>
+
+          <div class="hr"></div>
+
+          <div class="row">
+            <button class="btn secondary" data-act="addEv" data-id="${c.id}">+ weiterer Beleg</button>
+            <button class="btn" data-act="recalc" data-id="${c.id}">Score aktualisieren</button>
+          </div>
+        </div>
+      `;
+      root.appendChild(item);
+    }
+  }
+
+  function renderEvidenceEditor(claim, idx, title){
+    const ev = claim.evidence[idx] || { url:"", stance:"neutral", quote:"", notes:"" };
+    const q = estimateSourceQuality(ev.url);
+    const qLabel = ev.url ? `${q.score}/100 • ${q.label}` : "—";
+
+    return `
+      <div class="evi">
+        <div class="k">${escapeHtml(title)} <span style="color:var(--faint);font-weight:900">(${qLabel})</span></div>
+
+        <label class="hint">URL</label>
+        <input type="text" value="${escapeAttr(ev.url||"")}" placeholder="https://…" data-ev="url" data-id="${claim.id}" data-idx="${idx}"/>
+
+        <div style="height:8px"></div>
+
+        <div class="row">
+          <div class="field" style="min-width:170px">
+            <label>Stance</label>
+            <input type="text" value="${escapeAttr(ev.stance||"neutral")}" placeholder="support | contradict | neutral" data-ev="stance" data-id="${claim.id}" data-idx="${idx}"/>
+          </div>
+          <button class="btn secondary" data-act="fetch" data-id="${claim.id}" data-idx="${idx}">URL einlesen (Proxy)</button>
+        </div>
+
+        <div style="height:8px"></div>
+
+        <label class="hint">Zitat / relevanter Auszug (mind. 1–2 Sätze)</label>
+        <input type="text" value="${escapeAttr(ev.quote||"")}" placeholder="Zitat oder Kernaussage aus der Quelle…" data-ev="quote" data-id="${claim.id}" data-idx="${idx}"/>
+
+        <div style="height:8px"></div>
+
+        <label class="hint">Notizen (Datum, Kontext, warum relevant)</label>
+        <input type="text" value="${escapeAttr(ev.notes||"")}" placeholder="z.B. Datum, Abschnitt, Einschränkungen…" data-ev="notes" data-id="${claim.id}" data-idx="${idx}"/>
+      </div>
+    `;
+  }
+
+  function escapeHtml(s){
+    return (s||"").replace(/[&<>"']/g, (c)=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;" }[c]));
+  }
+  function escapeAttr(s){ return escapeHtml(s).replace(/"/g, "&quot;"); }
+
+  function extractClaims(){
+    const text = normalize($("inputText").value);
+    if (!text){
+      toast("Bitte Text einfügen");
+      return;
+    }
+    const sentences = splitSentences(text);
+    const picked = sentences.filter(isLikelyClaim);
+
+    // De-duplicate basic
+    const uniq = [];
+    const seen = new Set();
+    for (const s of picked){
+      const key = s.toLowerCase().replace(/\s+/g," ").slice(0,160);
+      if (!seen.has(key)){
+        seen.add(key);
+        uniq.push(s);
+      }
+    }
+
+    state.claims = uniq.slice(0, 18).map(makeClaimObject); // MVP cap
+    renderClaims();
+    updateReportPreview();
+    toast(`${state.claims.length} Claims`);
+  }
+
+  function updateReportPreview(){
+    const topic = normalize($("topic").value);
+    const lang = normalize($("lang").value) || "de";
+    state.topic = topic;
+    state.lang = lang;
+
+    const scored = state.claims.map(c => {
+      const sc = scoreClaim(c);
+      return {
+        id: c.id,
+        text: c.text,
+        type: c.type,
+        score: sc.score,
+        label: sc.label,
+        reasons: sc.reasons,
+        evidence: (c.evidence||[]).filter(e => (e.url||e.quote||e.notes)).map(e => ({
+          url: e.url || "",
+          stance: e.stance || "neutral",
+          quote: e.quote || "",
+          notes: e.notes || "",
+          source_quality: e.url ? estimateSourceQuality(e.url) : {score:0,label:""}
+        }))
+      };
+    });
+
+    const overall = computeOverall(scored);
+    $("overallScore").textContent = overall.score;
+    $("overallLabel").innerHTML = `<b>Status:</b> ${escapeHtml(overall.label)}`;
+    $("overallReasons").innerHTML = overall.reasons.map(r => `<li>${escapeHtml(r)}</li>`).join("");
+
+    const report = {
+      meta: {
+        title: topic ? `FakeNews Filter Report – ${topic}` : "FakeNews Filter Report (MVP)",
+        created_at: state.createdAt,
+        language: lang,
+        method: "claim→evidence→source-quality→corroboration→context→manipulation-signals (no prefabricated topic answers)"
+      },
+      overall,
+      claims: scored
+    };
+
+    $("reportPreview").textContent = JSON.stringify(report, null, 2);
+    return report;
+  }
+
+  function computeOverall(scoredClaims){
+    if (!scoredClaims.length){
+      return { score: "—", label: "—", reasons: ["Noch keine Claims."] };
+    }
+    const scores = scoredClaims.map(c => c.score);
+    const avg = Math.round(scores.reduce((a,b)=>a+b,0)/scores.length);
+
+    // penalty if most claims have no evidence
+    const withEv = scoredClaims.filter(c => (c.evidence||[]).length>0).length;
+    const evRatio = withEv / scoredClaims.length;
+    const evAdj = evRatio >= 0.75 ? +6 : evRatio >= 0.5 ? 0 : -10;
+
+    let score = Math.max(0, Math.min(100, avg + evAdj));
+
+    let label = "unbelegt / uneinheitlich";
+    if (score >= 80) label = "stark belegt (transparenter Report)";
+    else if (score >= 60) label = "solide, aber weiter absichern";
+    else if (score >= 40) label = "kritisch – Belege/Qualität fehlen";
+    else label = "sehr kritisch – schwach / widersprüchlich / manipulativ";
+
+    const reasons = [];
+    reasons.push(`Ø Claim-Score: ${avg}/100`);
+    reasons.push(`Claims mit Belegen: ${withEv}/${scoredClaims.length} (${Math.round(evRatio*100)}%)`);
+    if (evAdj) reasons.push(`Evidence-Abdeckung Anpassung: ${evAdj>0?"+":""}${evAdj}`);
+    reasons.push(`Hinweis: Score misst Transparenz/Beleglage – nicht “politische Richtigkeit”.`);
+
+    return { score, label, reasons };
+  }
+
+  // ---- Actions ----
+  $("btnExtract").addEventListener("click", extractClaims);
+
+  $("btnScore").addEventListener("click", () => {
+    updateReportPreview();
+    toast("Score berechnet");
+    renderClaims();
   });
-}
 
-function htmlToText(html) {
-  // VERY simple stripper (MVP). Keeps determinism; user still verifies meaning.
-  return html
-    .replace(/<script[\s\S]*?<\/script>/gi, " ")
-    .replace(/<style[\s\S]*?<\/style>/gi, " ")
-    .replace(/<\/(p|div|br|li|h1|h2|h3|h4|h5|tr)>/gi, "\n")
-    .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&quot;/g, '"')
-    .replace(/&#039;/g, "'")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/\s+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-}
+  $("btnClear").addEventListener("click", () => {
+    $("inputText").value = "";
+    state.claims = [];
+    renderClaims();
+    updateReportPreview();
+    toast("Geleert");
+  });
+
+  $("btnDemo").addEventListener("click", () => {
+    $("inputText").value =
+`Breaking: Niemand spricht darüber! Eine Studie zeigt, dass Produkt X das Risiko um 300% erhöht!!!
+Die Behörde Y habe das angeblich bestätigt.
+Laut Bericht vom 12.01.2026 sei die Inflation in Land Z real bei 25%.
+Man sagt außerdem, dass Politiker A heimlich Gesetz B geändert hat.`;
+    toast("Demo geladen");
+  });
+
+  $("btnCopy").addEventListener("click", async () => {
+    const report = updateReportPreview();
+    const txt = buildShareText(report);
+    await navigator.clipboard.writeText(txt);
+    toast("Report kopiert");
+  });
+
+  $("btnJson").addEventListener("click", () => {
+    const report = updateReportPreview();
+    const blob = new Blob([JSON.stringify(report, null, 2)], {type:"application/json"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "fakefilter-report.json";
+    a.click();
+    toast("JSON exportiert");
+  });
+
+  $("btnExpandAll").addEventListener("click", () => {
+    state.claims.forEach(c => c.open = true);
+    renderClaims();
+  });
+
+  $("btnCollapseAll").addEventListener("click", () => {
+    state.claims.forEach(c => c.open = false);
+    renderClaims();
+  });
+
+  // Delegate clicks inside claims list
+  $("claimsList").addEventListener("click", async (e) => {
+    const btn = e.target.closest("button");
+    if (!btn) return;
+    const act = btn.dataset.act;
+    const id = btn.dataset.id;
+    const idx = btn.dataset.idx ? Number(btn.dataset.idx) : null;
+
+    const claim = state.claims.find(c => c.id === id);
+    if (!claim) return;
+
+    if (act === "toggle"){
+      claim.open = !claim.open;
+      renderClaims();
+      return;
+    }
+    if (act === "remove"){
+      state.claims = state.claims.filter(c => c.id !== id);
+      renderClaims();
+      updateReportPreview();
+      toast("Entfernt");
+      return;
+    }
+    if (act === "addEv"){
+      claim.evidence.push({ url:"", stance:"neutral", quote:"", notes:"" });
+      claim.open = true;
+      renderClaims();
+      return;
+    }
+    if (act === "recalc"){
+      updateReportPreview();
+      renderClaims();
+      toast("Aktualisiert");
+      return;
+    }
+    if (act === "search"){
+      // open 3 query tabs for evidence gathering (no prefabricated answers, just search links)
+      const q = encodeURIComponent(claim.text);
+      window.open(`https://www.google.com/search?q=${q}`, "_blank");
+      window.open(`https://duckduckgo.com/?q=${q}`, "_blank");
+      window.open(`https://en.wikipedia.org/w/index.php?search=${q}`, "_blank");
+      return;
+    }
+    if (act === "fetch"){
+      const proxy = normalize($("proxyUrl").value);
+      const ev = claim.evidence[idx];
+      if (!ev || !ev.url) return toast("URL fehlt");
+      if (!proxy) return toast("Proxy-URL fehlt");
+
+      try{
+        btn.disabled = true;
+        btn.textContent = "Lese ein…";
+        const url = `${proxy.replace(/\/$/,"")}/extract?url=${encodeURIComponent(ev.url)}`;
+        const res = await fetch(url, { headers: { "accept":"application/json" }});
+        if (!res.ok) throw new Error("Fetch failed: " + res.status);
+        const data = await res.json();
+        // Put a short excerpt into notes (user still decides relevance)
+        const excerpt = (data.text||"").trim().slice(0, 240);
+        ev.notes = (ev.notes||"");
+        if (excerpt && !ev.notes.includes("AUTO-EXCERPT")){
+          ev.notes = `${ev.notes ? ev.notes + " | " : ""}AUTO-EXCERPT: ${excerpt}`;
+        }
+        renderClaims();
+        updateReportPreview();
+        toast("Quelle eingelesen");
+      }catch(err){
+        toast("Einlesen fehlgeschlagen");
+      }finally{
+        btn.disabled = false;
+        btn.textContent = "URL einlesen (Proxy)";
+      }
+      return;
+    }
+  });
+
+  // Delegate inputs
+  $("claimsList").addEventListener("input", (e) => {
+    const inp = e.target.closest("input");
+    if (!inp) return;
+    const id = inp.dataset.id;
+    const idx = Number(inp.dataset.idx);
+    const key = inp.dataset.ev;
+    const claim = state.claims.find(c => c.id === id);
+    if (!claim || !claim.evidence[idx]) return;
+    claim.evidence[idx][key] = inp.value;
+    updateReportPreview();
+  });
+
+  function buildShareText(report){
+    const o = report.overall;
+    const lines = [];
+    lines.push(report.meta.title);
+    lines.push(`Datum: ${new Date(report.meta.created_at).toLocaleString()}`);
+    lines.push(`Overall: ${o.score}/100 – ${o.label}`);
+    lines.push("");
+    lines.push("Claims:");
+    for (const c of report.claims.slice(0, 8)){
+      lines.push(`- (${c.score}/100) [${c.type}] ${c.text}`);
+      const ev = (c.evidence||[]).slice(0, 2);
+      for (const e of ev){
+        if (e.url) lines.push(`  • ${e.stance}: ${e.url}`);
+      }
+    }
+    lines.push("");
+    lines.push("Methodik: Claim→Belege→Quellenqualität→Mehrfachbestätigung→Kontext→Manipulationssignale. Keine vorgefertigten Themenurteile.");
+    return lines.join("\n");
+  }
+
+  // init
+  renderClaims();
+  updateReportPreview();
+})();
+</script>
+</body>
+</html>
